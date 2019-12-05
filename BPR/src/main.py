@@ -117,8 +117,6 @@ if __name__ == '__main__':
     best_val_performance = 0.0
     checkpoint_path = '../models/{}_{}.pt'.format(args.method, args.dataset)
 
-    train = 0.0
-
     # Preprocessing
     user_restaurants = collections.defaultdict(set)
     fp = csv.reader(open("../data/train.csv"), delimiter=',')
@@ -145,19 +143,19 @@ if __name__ == '__main__':
         for restaurant in restaurants:
             user_categories[user].add(restaurant_category[restaurant])
 
-    # compile 5 most similar users based on all 3 sets of data
-    # most_similar_users = collections.defaultdict(list)
-    # for user in user_categories:
-    #     categories = user_categories[user]
-    #     users = user_users[user]
-    #     for other_user in users: # go through users they have interacted with
-    #         other_categories = user_categories[other_user]
-    #         if (len(categories.intersection(other_categories)) > 0): # if category preference is similar add to list
-    #             if len(most_similar_users[user]) < 5:
-    #                 most_similar_users[user].append(other_user)
-    #     most_similar_users[user] += [user] * (5 - len(most_similar_users[user]))
+    # compile 5 similar users based on all 3 sets of data
+    similar_users = collections.defaultdict(list)
+    for user in user_categories:
+        categories = user_categories[user]
+        users = user_users[user]
+        for other_user in users: # go through users they have interacted with
+            other_categories = user_categories[other_user]
+            if (len(categories.intersection(other_categories)) > 0): # if category preference is similar add to list
+                if len(similar_users[user]) < 5:
+                    similar_users[user].append(other_user)
+        similar_users[user] += [user] * (5 - len(similar_users[user]))
 
-    # Compute most similar users based on all 3 sets of data
+    # Compute most similar user based on all 3 sets of data
     most_similar_user = {}
     for user in user_categories:
         categories = user_categories[user]
@@ -180,28 +178,21 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             user_batch = torch.LongTensor(user_batch)
             item_batch = torch.LongTensor(item_batch)
-            similar_user_batch = torch.tensor([most_similar_user[user.item()] for user in user_batch])
             if args.use_gpu:
                 user_batch = user_batch.cuda()
                 item_batch = item_batch.cuda()
-                similar_user_batch = similar_user_batch.cuda()
             pos_preds = model(user_batch, item_batch)
-            pos_similar_user_preds = model(similar_user_batch, item_batch)
-            new_pos_preds = pos_preds * (1.0 - train) + pos_similar_user_preds * train
             negative_items = model.sample_negs(item_batch, 1) # [B, 1]
             if args.use_gpu:
                 negative_items = negative_items.cuda()
             neg_preds = model(user_batch, negative_items.view(-1))
-            neg_similar_user_preds = model(similar_user_batch, negative_items.view(-1))
-            new_neg_preds = neg_preds * (1.0 - train) + neg_similar_user_preds * train
-            batch_loss = model.loss(new_pos_preds, new_neg_preds)
+            batch_loss = model.loss(pos_preds, neg_preds)
             batch_loss.backward()
             optimizer.step()
             epoch_loss += batch_loss
         epoch_loss /= len(train_generator)
 
         if epoch % args.val_iter == 0:
-            train = min(0.25, train + 0.01)
             model.eval()
             val_performance = evaluate(test_set, model, use_gpu=args.use_gpu, mode = 'val')
             print ("val performance", val_performance, "best val performance : ", best_val_performance)
